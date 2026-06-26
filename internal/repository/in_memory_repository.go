@@ -71,3 +71,33 @@ func (r *InMemoryPartRepository) ListByCategory(category string) ([]domain.Part,
 	}
 	return result, nil
 }
+
+// Update Atualiza informações da peça
+func (r *InMemoryPartRepository) Update(part domain.Part) (domain.Part, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	existing, exists := r.parts[part.ID] //verifica se a peça existe através do ID da struct
+	if !exists {
+		return domain.Part{}, ErrPartNotFound
+	}
+
+	part.CreatedAt = existing.CreatedAt
+	part.UpdatedAt = time.Now().UTC()
+
+	r.parts[part.ID] = part //recebe nova struct da peça
+	return part, nil
+}
+
+// Remove a entrada correspondente ao ID do map.
+func (r *InMemoryPartRepository) Delete(id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, exists := r.parts[id]; !exists {
+		return ErrPartNotFound
+	}
+
+	delete(r.parts, id) //deleta a chave
+	return nil
+}
