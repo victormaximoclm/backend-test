@@ -45,3 +45,29 @@ func (r *InMemoryPartRepository) GetByID(id string) (domain.Part, error) {
 	}
 	return part, nil
 }
+
+// List percorre o map interno e retorna todas as peças em um slice.
+func (r *InMemoryPartRepository) List() ([]domain.Part, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	result := make([]domain.Part, 0, len(r.parts)) //cria slice do tamanho de quantidade de pecas do repositorio
+	for _, p := range r.parts {                    //percorre ate o final do repositorio
+		result = append(result, p) //adiciona peca ao slice
+	}
+	return result, nil //retorna o slice preenchido
+}
+
+// ListByCategory funciona de forma semlhante mas antes verifica se a categoria da peca equivale a solicitada
+func (r *InMemoryPartRepository) ListByCategory(category string) ([]domain.Part, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	result := make([]domain.Part, 0)
+	for _, p := range r.parts {
+		if p.Category == category {
+			result = append(result, p)
+		}
+	}
+	return result, nil
+}
