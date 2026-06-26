@@ -32,3 +32,16 @@ func (r *InMemoryPartRepository) Create(part domain.Part) (domain.Part, error) {
 	r.parts[part.ID] = part
 	return part, nil
 }
+
+// GetByID busca uma peça pelo ID no repositório.
+// Retorna a peça encontrada ou erro caso não exista.
+func (r *InMemoryPartRepository) GetByID(id string) (domain.Part, error) {
+	r.mu.RLock() // bloqueia escrita enquanto realiza leitura do map
+	defer r.mu.RUnlock()
+
+	part, exists := r.parts[id]
+	if !exists {
+		return domain.Part{}, ErrPartNotFound
+	}
+	return part, nil
+}
