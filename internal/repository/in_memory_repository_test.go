@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 
 	"backend-test/internal/domain"
@@ -144,5 +146,79 @@ func TestInMemoryPartRepository_Delete_NaoEncontrado(t *testing.T) {
 	err := repo.Delete("inexistente")
 	if err != ErrPartNotFound {
 		t.Errorf("esperado ErrPartNotFound, obtido: %v", err)
+	}
+}
+
+// Teste de concorrência
+//
+// Valida que o repositório suporta acesso simultâneo sem corromper dados
+// para suportar centenas ou milhares de peças
+//
+//	go test ./internal/repository/... -race -v
+func TestInMemoryPartRepository_ConcorrenciaCriacaoEListagem(t *testing.T) {
+	repo := NewInMemoryPartRepository()
+
+	const totalGoroutines = 200
+	var wg sync.WaitGroup
+
+	for i := 0; i < totalGoroutines; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			id := fmt.Sprintf("id-%d", n)
+			_, err := repo.Create(testPart(id))
+			if err != nil {
+				t.Errorf("erro inesperado ao criar peça %s: %v", id, err)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	all, err := repo.List()
+	if err != nil {
+		t.Fatalf("erro inesperado ao listar: %v", err)
+	}
+	if len(all) != totalGoroutines {
+		t.Errorf("esperado %d peças, obtido %d", totalGoroutines, len(all))
+	}
+}
+
+// TestInMemoryPartRepository_ConcorrenciaLeituraEEscrita mistura leituras
+// (List) e escritas (Create) simultâneas, para validar que o RWMutex
+// protege corretamente os dois tipos de acesso ao mesmo tempo.
+func TestInMemoryPartRepository_ConcorrenciaLeituraEEscrita(t *testing.T) {
+	repo := NewInMemoryPartRepository()
+
+	for i := 0; i < 50; i++ {
+		repo.Create(testPart(fmt.Sprintf("seed-%d", i)))
+	}
+
+	var wg sync.WaitGroup
+
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = repo.List()
+		}()
+	}
+
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			_, _ = repo.Create(testPart(fmt.Sprintf("new-%d", n)))
+		}(i)
+	}
+
+	wg.Wait()
+
+	all, err := repo.List()
+	if err != nil {
+		t.Fatalf("erro inesperado: %v", err)
+	}
+	if len(all) != 100 {
+		t.Errorf("esperado 100 peças, obtido %d", len(all))
 	}
 }
