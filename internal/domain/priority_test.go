@@ -281,3 +281,25 @@ func TestRankPriorities_ListaVazia(t *testing.T) {
 		t.Errorf("esperado lista vazia, obtido %d resultados", len(results))
 	}
 }
+
+func TestCalculatePriority_ProjectedStockIgualAoMinimo(t *testing.T) {
+	// Quando projectedStock é EXATAMENTE igual a minimumStock, a regra é
+	// needsRestock = projectedStock < minimumStock — ou seja, igualdade
+	// NÃO deve disparar reposição (só estritamente menor).
+	p := newTestPart(func(p *Part) {
+		p.CurrentStock = 30
+		p.MinimumStock = 20
+		p.AverageDailySales = 2
+		p.LeadTimeDays = 5
+	})
+
+	result := CalculatePriority(p)
+
+	// expectedConsumption = 10, projectedStock = 30 - 10 = 20 (== minimumStock)
+	if result.ProjectedStock != 20 {
+		t.Fatalf("pré-condição falhou: projectedStock = %v; esperado 20 para testar o limite", result.ProjectedStock)
+	}
+	if result.NeedsRestock {
+		t.Errorf("needsRestock = true; esperado false (projectedStock igual ao minimo, não menor)")
+	}
+}
