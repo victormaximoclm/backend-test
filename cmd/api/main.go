@@ -21,6 +21,7 @@ func main() {
 	// substituir esta linha por outra implementação de
 	// repository.PartRepository — nenhuma linha abaixo precisa mudar.
 	partRepo := repository.NewInMemoryPartRepository()
+	seedData(partRepo)
 
 	// Camada de serviço.
 	partService := service.NewPartService(partRepo)
