@@ -1,118 +1,143 @@
-# 🚚 Desafio Backend – Motor de Priorização de Reposição de Estoque
+# Restock Priority Service
 
-## 🧩 Contexto
+Microserviço em Go para gestão de peças de autopeças e cálculo automático
+de priorização de reposição de estoque, considerando estoque atual,
+criticidade, padrão de vendas e lead time de fornecedores.
 
-Somos um distribuidor de autopeças. Diariamente precisamos decidir **quais peças devem ser priorizadas para reposição**, considerando:
+## Sumário
 
-- Estoque limitado
-- Capital de giro limitado
-- Diferentes níveis de criticidade
-- Padrões de venda distintos
-- Tempo de reposição do fornecedor
+- [Arquitetura](#arquitetura)
+- [Decisões de projeto](#decisões-de-projeto)
+- [Como rodar localmente](#como-rodar-localmente)
+- [Endpoints e exemplos de requisição](#endpoints-e-exemplos-de-requisição)
+- [Regras de negócio](#regras-de-negócio)
+- [Testes](#testes)
+- [Trocando o banco de dados no futuro](#trocando-o-banco-de-dados-no-futuro)
 
-O objetivo é construir um microserviço capaz de:
+## Arquitetura
 
-1. Gerenciar peças em estoque
-2. Calcular automaticamente quais peças devem ser priorizadas para reposição
-3. Ordenar as peças por nível de urgência
+O projeto segue uma arquitetura em camadas, com a direção de dependência
+sempre apontando para dentro (HTTP → Service → Repository/Domain), nunca o
+contrário:
 
----
+```
+cmd/
+└── api/
+    └── main.go
 
-# 🛠️ Requisitos Funcionais
-
-## 1️⃣ CRUD de Peças
-
-Criar uma API para:
-
-- Criar peça
-- Listar peças
-- Atualizar peça
-- Remover peça
-- Buscar por categoria (opcional)
-
-### 📦 Estrutura da Entidade
-
-```json
-{
-  "id": "uuid",
-  "name": "Filtro de Óleo X",
-  "category": "engine",
-  "currentStock": 15,
-  "minimumStock": 20,
-  "averageDailySales": 4,
-  "leadTimeDays": 5,
-  "unitCost": 18.50,
-  "criticalityLevel": 3
-}
+internal/
+├── domain/
+├── repository/
+├── service/
+└── http/
+    ├── handler/
+    └── router/
 ```
 
-## 📝 Descrição dos Campos
+## Decisões de projeto
 
-| Campo | Descrição |
-|--------|------------|
-| `currentStock` | Estoque atual disponível |
-| `minimumStock` | Estoque mínimo desejado |
-| `averageDailySales` | Média de vendas por dia |
-| `leadTimeDays` | Tempo (em dias) que o fornecedor demora para entregar a peça |
-| `unitCost` | Custo unitário da peça |
-| `criticalityLevel` | Nível de criticidade (1 a 5) |
+| Decisão                                                                                                | Motivo                                                                                                                                                                                  |
+| ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Go puro + Chi**                                                                                      | API pequena, leve e sem dependências desnecessárias                                                                                                                                     |
+| **Persistência in-memory** (`map` + `sync.RWMutex`)                                                    | Isola a camada de armazenamento atrás de uma interface, sem exigir banco externo para rodar/avaliar o desafio                                                                           |
+| **IDs gerados com `google/uuid`**                                                                      | IDs únicos sem depender do banco                                                                                                                                                        |
+| **`PartService` e `PriorityService` separados**                                                        | Responsabilidades diferentes (CRUD vs. cálculo de priorização)                                                                                                                          |
+| **Arredondamento de 2 casas decimais** (`expectedConsumption`, `projectedStock`, `urgencyScore`)       | Evita ruído de ponto flutuante na exibição (ex: `44.99999999999999`). Aplicado apenas no valor de saída — `needsRestock` e `urgencyScore` usam os valores não arredondados internamente |
+| **Campos adicionais no JSON de resposta** (`category` na priorização; `createdAt`/`updatedAt` no CRUD) | O desafio não restringe a resposta a exatamente os campos do exemplo; esses campos agregam contexto sem remover nenhum dos exemplificados                                               |
 
----
+## Como rodar localmente
 
-## 🧠 Endpoint de Priorização
+Pré-requisitos: [Go 1.22+](https://go.dev/dl/) instalado.
 
-Criar o endpoint:
+```bash
+# 1. Entrar na pasta do projeto
+cd backend-test
 
-```GET /restock/priorities```
+# 2. Baixar as dependências e gerar/validar o go.sum
+go mod tidy
 
-Esse endpoint deve retornar as peças ordenadas por prioridade de reposição.
+# 3. Rodar os testes
+go test ./... -v
 
----
+# 4. Rodar o servidor (porta padrão 8080, configurável via env PORT)
+go run ./cmd/api
+```
 
-## 📐 Regras de Negócio
+O servidor inicia em `http://localhost:8080`.
 
-### 1️⃣ Calcular Consumo Esperado Durante o Lead Time
+## Endpoints e exemplos de requisição
 
-```expectedConsumption = averageDailySales * leadTimeDays```
+### Health check
 
----
+```bash
+curl http://localhost:8080/health
+```
 
-### 2️⃣ Calcular Estoque Projetado
+### Criar peça
 
-```projectedStock = currentStock - expectedConsumption```
+```bash
+curl -X POST http://localhost:8080/parts/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Filtro de Óleo X",
+    "category": "engine",
+    "currentStock": 15,
+    "minimumStock": 20,
+    "averageDailySales": 4,
+    "leadTimeDays": 5,
+    "unitCost": 18.50,
+    "criticalityLevel": 3
+  }'
+```
 
----
+### Listar todas as peças
 
-### 3️⃣ Identificar Necessidade de Reposição
+```bash
+curl http://localhost:8080/parts/
+```
 
-Uma peça precisa de reposição quando:
-```projectedStock < minimumStock```
+### Listar peças por categoria
 
+```bash
+curl "http://localhost:8080/parts/?category=engine"
+```
 
----
+### Buscar peça por ID
 
-### 4️⃣ Calcular Score de Prioridade
+```bash
+curl http://localhost:8080/parts/{id}
+```
 
-O score de prioridade deve ser calculado da seguinte forma:
+### Atualizar peça
 
-```urgencyScore = (minimumStock - projectedStock) * criticalityLevel```
+```bash
+curl -X PUT http://localhost:8080/parts/{id} \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Filtro de Óleo X",
+    "category": "engine",
+    "currentStock": 40,
+    "minimumStock": 20,
+    "averageDailySales": 4,
+    "leadTimeDays": 5,
+    "unitCost": 18.50,
+    "criticalityLevel": 3
+  }'
+```
 
+### Remover peça
 
-Quanto maior o `urgencyScore`, maior a prioridade de reposição.
+```bash
+curl -X DELETE http://localhost:8080/parts/{id}
+```
 
----
+### Priorização de reposição
 
-## 🟰 Critérios de Desempate
+```bash
+curl http://localhost:8080/restock/priorities
+```
 
-Em caso de empate no `urgencyScore`, aplicar:
-
-1. Maior `criticalityLevel`
-2. Maior `averageDailySales`
-3. Ordem alfabética pelo nome da peça
-
----
-
-## 📤 Exemplo de Resposta
+Resposta (apenas peças que precisam de reposição, ordenadas por urgência):
 
 ```json
 {
@@ -120,61 +145,86 @@ Em caso de empate no `urgencyScore`, aplicar:
     {
       "partId": "uuid-1",
       "name": "Filtro de Óleo X",
+      "category": "engine",
       "currentStock": 15,
-      "projectedStock": 5,
+      "projectedStock": -5,
       "minimumStock": 20,
-      "urgencyScore": 45
-    },
-    {
-      "partId": "uuid-2",
-      "name": "Pastilha de Freio Y",
-      "currentStock": 8,
-      "projectedStock": -2,
-      "minimumStock": 10,
-      "urgencyScore": 36
+      "urgencyScore": 75
     }
   ]
 }
 ```
 
-### 📌 Regras Gerais
+## Regras de negócio
 
-- Não utilizar APIs externas.
-- O sistema deve estar preparado para suportar centenas ou milhares de peças.
-- A solução deve permitir futura troca de banco de dados.
-- O cálculo de prioridade deve estar isolado da camada HTTP.
-- Tratar corretamente casos de estoque negativo.
+Implementadas em `internal/domain/priority.go`:
 
-### 🎯 O Que Será Avaliado
-- 🧠 Modelagem de Domínio
-- Clareza das entidades
-- Separação de responsabilidades
-- Organização das regras de negócio
+1. `expectedConsumption = averageDailySales * leadTimeDays`
+2. `projectedStock = currentStock - expectedConsumption`
+3. `needsRestock = projectedStock < minimumStock`
+4. `urgencyScore = (minimumStock - projectedStock) * criticalityLevel`
 
-### 🧪 Testes
-- Testes unitários do cálculo de prioridade
-- Testes de cenários extremos (estoque negativo, venda zero, lead time alto)
+Critérios de desempate (em ordem): maior `urgencyScore` → maior
+`criticalityLevel` → maior `averageDailySales` → ordem alfabética pelo nome.
 
-### 🏗️ Arquitetura
-- Uso adequado de camadas (ex: Controller, Service, Domain, Repository)
-- Código limpo e organizado
-- Facilidade de manutenção
+### Tratamento de casos extremos
 
-### 🧰 Tecnologias
+- **Estoque atual negativo**: tratado como cenário de negócio válido (não
+  é rejeitado na validação de entrada). Resulta em `projectedStock` ainda
+  mais negativo e, consequentemente, `urgencyScore` mais alto.
+- **Venda média zero**: `expectedConsumption = 0`, logo
+  `projectedStock = currentStock`. A peça só precisa de reposição se o
+  estoque atual já estiver abaixo do mínimo.
+- **Lead time alto**: aumenta proporcionalmente o consumo esperado e,
+  portanto, a urgência — sem teto artificial.
 
-Pode ser desenvolvido utilizando:
+## Testes
 
-- Node.js (com TypeScript)
-- Golang
-- Frameworks e bibliotecas são livres
+```bash
+go test ./... -v
+```
 
-### 📄 Entrega
+Para incluir o detector de condição de corrida (relevante para a camada
+de persistência, que precisa suportar acesso concorrente):
 
-O projeto deve conter:
+```bash
+go test ./... -race -v
+```
 
-- Código-fonte organizado
-- README com instruções para rodar localmente
-- Exemplos de requisição
-- Testes automatizados
+Cobertura:
 
-Boa implementação 🚀
+- **`internal/domain`**: testes unitários puros do cálculo de prioridade
+  — cenários extremos (estoque negativo, venda média zero, lead time
+  alto), critérios de desempate isolados, e teste de limite
+  (`projectedStock == minimumStock`). A validação de invariantes da
+  entidade (`Part.Validate()`) é exercitada via `internal/service` e
+  nos testes de integração HTTP.
+- **`internal/repository`**: testes funcionais do CRUD em memória, e
+  testes de concorrência (`-race`) que validam o `RWMutex` sob criação e
+  leitura simultâneas — relevante para o requisito de suportar centenas
+  ou milhares de peças.
+- **`internal/service`**: testes com um repositório _fake_ (implementação
+  de teste da interface `PartRepository`), validando a orquestração entre
+  domínio e persistência sem depender de infraestrutura real.
+- **`internal/http/handler`**: testes de integração via `httptest`, com a
+  aplicação completa montada (repositório real + services reais +
+  handlers + router), validando o fluxo HTTP de ponta a ponta.
+
+## Trocando o banco de dados no futuro
+
+A interface `PartRepository` (`internal/repository/part_repository.go`)
+define o contrato. Para trocar a persistência:
+
+1. Criar uma nova struct (ex: `PostgresPartRepository`) implementando os
+   mesmos métodos da interface.
+2. Trocar a linha de instanciação em `cmd/api/main.go`:
+
+```go
+   // antes
+   partRepo := repository.NewInMemoryPartRepository()
+   // depois
+   partRepo := repository.NewPostgresPartRepository(db)
+```
+
+3. Nenhuma outra camada (`service`, `handler`, `domain`) precisa de
+   qualquer alteração.
